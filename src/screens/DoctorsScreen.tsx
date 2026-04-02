@@ -1,18 +1,59 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView, ActivityIndicator } from 'react-native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { doctors, SPECIALTY_CONFIG } from '../data/doctors';
-import { Doctor } from '../types';
+import { SPECIALTY_CONFIG } from '../data/doctors';
+import { ApiDoctor, fetchDoctors } from '../services/doctorService';
 import { C, RADIUS, SP } from '../theme';
 
-const SPECS = ['Barchasi', ...Object.keys(SPECIALTY_CONFIG)];
+// API spec nomlari bilan lokal config ni moslashtirish
+const API_SPEC_MAP: Record<string, string> = {
+  'Nevrolog': 'Nevropatolog',
+  'Otorinolaringolog': 'LOR',
+};
+
+const getSpecConfig = (spec: string) => {
+  const mapped = API_SPEC_MAP[spec];
+  return SPECIALTY_CONFIG[spec] || SPECIALTY_CONFIG[mapped || ''] || { icon: 'medical-outline', color: C.textTertiary, bg: C.bg };
+};
 
 export default function DoctorsScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const [query, setQuery] = useState('');
   const [selSpec, setSelSpec] = useState('Barchasi');
+  const [doctors, setDoctors] = useState<ApiDoctor[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const pollRef = useRef<any>(null);
+  const firstLoad = useRef(true);
+
+  const loadDoctors = useCallback(async (showLoader = false) => {
+    if (showLoader) { setLoading(true); setError(''); }
+    try {
+      const data = await fetchDoctors();
+      setDoctors(data);
+      if (showLoader) setError('');
+    } catch (e: any) {
+      if (showLoader) setError(e.message || 'Xatolik yuz berdi');
+    } finally {
+      if (showLoader) setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadDoctors(firstLoad.current);
+      firstLoad.current = false;
+
+      // 15s polling — online status yangilanishi uchun
+      pollRef.current = setInterval(() => loadDoctors(false), 15000);
+      return () => {
+        if (pollRef.current) clearInterval(pollRef.current);
+      };
+    }, [loadDoctors]),
+  );
 
   // AI dan kelgan specialty filtri
   useEffect(() => {
@@ -21,22 +62,23 @@ export default function DoctorsScreen() {
     }
   }, [route.params?.specialty]);
 
+  // API dan kelgan noyob spec nomlari
+  const apiSpecs = [...new Set(doctors.map((d) => d.spec))];
+  const SPECS = ['Barchasi', ...apiSpecs];
+
   const filtered = doctors.filter((d) => {
-    const matchQ = d.name.toLowerCase().includes(query.toLowerCase()) || d.specialty.toLowerCase().includes(query.toLowerCase());
-    const matchS = selSpec === 'Barchasi' || d.specialty === selSpec;
+    const matchQ = d.name.toLowerCase().includes(query.toLowerCase()) || d.spec.toLowerCase().includes(query.toLowerCase());
+    const matchS = selSpec === 'Barchasi' || d.spec === selSpec;
     return matchQ && matchS;
   });
 
-  const getSpec = (sp: string) => SPECIALTY_CONFIG[sp] || { icon: 'medical-outline', color: C.textTertiary, bg: C.bg };
-
-  const renderDoctor = ({ item }: { item: Doctor }) => {
-    const sp = getSpec(item.specialty);
-    const isAvail = item.available;
+  const renderDoctor = ({ item }: { item: ApiDoctor }) => {
+    const sp = getSpecConfig(item.spec);
 
     return (
       <TouchableOpacity
         style={s.card}
-        onPress={() => nav.navigate('DoctorDetail', { doctor: item })}
+        onPress={() => nav.navigate('DoctorDetail', { doctorId: item._id })}
         activeOpacity={0.7}
       >
         {/* Top section: avatar + name + chevron */}
@@ -47,11 +89,11 @@ export default function DoctorsScreen() {
           <View style={s.headerInfo}>
             <View style={s.nameRow}>
               <Text style={s.name} numberOfLines={1}>{item.name}</Text>
-              <View style={[s.statusDot, { backgroundColor: isAvail ? C.green : C.red }]} />
+              <View style={[s.statusDot, { backgroundColor: item.online ? C.green : C.red }]} />
             </View>
             <View style={[s.specBadge, { backgroundColor: sp.bg }]}>
               <Ionicons name={sp.icon as any} size={10} color={sp.color} />
-              <Text style={[s.specText, { color: sp.color }]}>{item.specialty}</Text>
+              <Text style={[s.specText, { color: sp.color }]}>{item.spec}</Text>
             </View>
           </View>
           <Ionicons name="chevron-forward" size={18} color={C.border} />
@@ -70,13 +112,14 @@ export default function DoctorsScreen() {
           <View style={s.statSep} />
           <View style={s.stat}>
             <Ionicons name="time-outline" size={13} color={C.textTertiary} />
-            <Text style={s.statVal}>{item.experience}</Text>
+            <Text style={s.statVal}>{item.exp}</Text>
             <Text style={s.statLabel}>yil</Text>
           </View>
           <View style={s.statSep} />
           <View style={s.stat}>
-            <Ionicons name="location-outline" size={13} color={C.textTertiary} />
-            <Text style={s.statVal} numberOfLines={1}>{item.location.split(', ')[1]}</Text>
+            <Ionicons name="chatbubble-outline" size={13} color={C.textTertiary} />
+            <Text style={s.statVal}>{item.reviews}</Text>
+            <Text style={s.statLabel}>sharh</Text>
           </View>
           <View style={s.statSep} />
           <View style={s.stat}>
@@ -84,6 +127,17 @@ export default function DoctorsScreen() {
             <Text style={s.statLabel}>so'm</Text>
           </View>
         </View>
+
+        {/* Tags */}
+        {item.tags.length > 0 && (
+          <View style={s.tagsRow}>
+            {item.tags.slice(0, 3).map((tag, i) => (
+              <View key={i} style={[s.tag, { backgroundColor: sp.bg }]}>
+                <Text style={[s.tagText, { color: sp.color }]}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -129,10 +183,10 @@ export default function DoctorsScreen() {
         >
           {SPECS.map((sp) => {
             const active = selSpec === sp;
-            const cfg = sp !== 'Barchasi' ? getSpec(sp) : null;
+            const cfg = sp !== 'Barchasi' ? getSpecConfig(sp) : null as any;
             const docCount = sp === 'Barchasi'
               ? doctors.length
-              : doctors.filter((d) => d.specialty === sp).length;
+              : doctors.filter((d) => d.spec === sp).length;
 
             return (
               <TouchableOpacity
@@ -158,7 +212,7 @@ export default function DoctorsScreen() {
                   {sp}
                 </Text>
                 <Text style={[s.catCount, active && s.catCountActive]}>
-                  {docCount} {docCount === 1 ? 'shifokor' : 'shifokor'}
+                  {docCount} shifokor
                 </Text>
               </TouchableOpacity>
             );
@@ -166,23 +220,41 @@ export default function DoctorsScreen() {
         </ScrollView>
       </View>
 
-      {/* List */}
-      <FlatList
-        data={filtered}
-        renderItem={renderDoctor}
-        keyExtractor={(i) => i.id}
-        contentContainerStyle={s.list}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <View style={s.empty}>
-            <View style={s.emptyIcon}>
-              <Ionicons name="search-outline" size={28} color={C.textTertiary} />
-            </View>
-            <Text style={s.emptyTitle}>Natija topilmadi</Text>
-            <Text style={s.emptyDesc}>Boshqa mutaxassislikni tanlang</Text>
+      {/* Content */}
+      {loading ? (
+        <View style={s.center}>
+          <ActivityIndicator size="large" color={C.brand} />
+          <Text style={s.loadingText}>Yuklanmoqda...</Text>
+        </View>
+      ) : error ? (
+        <View style={s.center}>
+          <View style={s.emptyIcon}>
+            <Ionicons name="cloud-offline-outline" size={28} color={C.red} />
           </View>
-        }
-      />
+          <Text style={s.emptyTitle}>{error}</Text>
+          <TouchableOpacity style={s.retryBtn} onPress={() => loadDoctors(true)} activeOpacity={0.7}>
+            <Ionicons name="refresh" size={16} color={C.brand} />
+            <Text style={s.retryText}>Qayta yuklash</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <FlatList
+          data={filtered}
+          renderItem={renderDoctor}
+          keyExtractor={(i) => i._id}
+          contentContainerStyle={s.list}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <View style={s.center}>
+              <View style={s.emptyIcon}>
+                <Ionicons name="search-outline" size={28} color={C.textTertiary} />
+              </View>
+              <Text style={s.emptyTitle}>Natija topilmadi</Text>
+              <Text style={s.emptyDesc}>Boshqa mutaxassislikni tanlang</Text>
+            </View>
+          }
+        />
+      )}
     </View>
   );
 }
@@ -363,8 +435,26 @@ const s = StyleSheet.create({
     color: C.brand,
   },
 
-  // Empty
-  empty: { alignItems: 'center', paddingTop: 80 },
+  // Tags
+  tagsRow: {
+    flexDirection: 'row',
+    paddingHorizontal: SP.lg,
+    paddingBottom: SP.md,
+    gap: SP.xs,
+  },
+  tag: {
+    paddingHorizontal: SP.sm,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  tagText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+
+  // Loading / Error / Empty
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40 },
+  loadingText: { fontSize: 14, color: C.textTertiary, marginTop: SP.md },
   emptyIcon: {
     width: 64, height: 64, borderRadius: 20,
     backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center',
@@ -372,4 +462,10 @@ const s = StyleSheet.create({
   },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: C.text, marginBottom: SP.xs },
   emptyDesc: { fontSize: 13, color: C.textTertiary },
+  retryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: SP.sm,
+    backgroundColor: C.brandLight, paddingHorizontal: SP.xl, paddingVertical: SP.md,
+    borderRadius: RADIUS.sm, marginTop: SP.lg,
+  },
+  retryText: { fontSize: 14, fontWeight: '600', color: C.brand },
 });

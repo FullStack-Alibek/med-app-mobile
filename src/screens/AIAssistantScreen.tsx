@@ -76,8 +76,8 @@ export default function AIAssistantScreen() {
     return doctors.filter((d) => d.specialty === specialty && d.available).slice(0, 2);
   };
 
-  const goToDoctor = (doctor: any) => {
-    nav.navigate('DoctorsTab', { screen: 'DoctorDetail', params: { doctor } });
+  const goToDoctor = (specialty: string) => {
+    nav.navigate('DoctorsTab', { screen: 'DoctorsList', params: { specialty } });
   };
 
   const quickActions = [
@@ -137,7 +137,7 @@ export default function AIAssistantScreen() {
                 <TouchableOpacity
                   key={doc.id}
                   style={st.docCard}
-                  onPress={() => goToDoctor(doc)}
+                  onPress={() => goToDoctor(item.specialty!)}
                   activeOpacity={0.7}
                 >
                   <View style={[st.docAvatar, { backgroundColor: spCfg?.bg || C.bg }]}>

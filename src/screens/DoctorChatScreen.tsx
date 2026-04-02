@@ -1,33 +1,61 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   FlatList, KeyboardAvoidingView, Platform, Modal, Image,
+  ActivityIndicator,
 } from 'react-native';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { useApp, Booking, DoctorMessage } from '../context/AppContext';
 import { SPECIALTY_CONFIG } from '../data/doctors';
+import { ApiChat, ApiChatMessage, fetchPatientChats, sendChatMessage, markMessagesRead } from '../services/doctorChatService';
+import { useCall } from '../context/CallContext';
+import { useAuth } from '../context/AuthContext';
 import { C, RADIUS, SP } from '../theme';
+
+interface DisplayMessage {
+  id: string;
+  bookingId: string;
+  text: string;
+  isUser: boolean;
+  timestamp: Date;
+  time: string;
+  read: boolean;
+  image?: string;
+  audio?: string;
+  audioDuration?: number;
+}
 
 export default function DoctorChatScreen() {
   const route = useRoute<any>();
   const nav = useNavigation();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const TAB_BAR_HEIGHT = 56 + Math.max(insets.bottom, 8);
-  const bk: Booking = route.params.booking;
+
+  // Support both old booking-based and new API-based navigation
+  const bk: Booking | undefined = route.params?.booking;
+  const doctorName: string = route.params?.doctorName || bk?.doctorName || '';
+  const patientUsername: string = route.params?.patientUsername || user?.username || '';
+  const patientName: string = route.params?.patientName || (user ? `${user.name} ${user.surname}` : '');
+  const specialty: string = bk?.specialty || '';
+
   const { getMessages, addMessage } = useApp();
-  const sp = SPECIALTY_CONFIG[bk.specialty] || { icon: 'medical-outline', color: C.textTertiary, bg: C.bg };
+  const sp = SPECIALTY_CONFIG[specialty] || { icon: 'medical-outline', color: C.textTertiary, bg: C.bg };
 
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
-  const [showCall, setShowCall] = useState(false);
-  const [callType, setCallType] = useState<'voice' | 'video'>('voice');
-  const [callActive, setCallActive] = useState(false);
-  const [callTimer, setCallTimer] = useState(0);
   const [showInfo, setShowInfo] = useState(false);
+  const [sending, setSending] = useState(false);
+  const { startCall: globalStartCall } = useCall();
+
+  // API messages
+  const [apiMessages, setApiMessages] = useState<DisplayMessage[]>([]);
+  const [loadingApi, setLoadingApi] = useState(false);
+  const isApiChat = !bk; // If no booking, it's API-based chat
 
   // Voice recording state
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
@@ -43,9 +71,67 @@ export default function DoctorChatScreen() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const ref = useRef<FlatList>(null);
-  const timerRef = useRef<any>(null);
   const recTimerRef = useRef<any>(null);
-  const msgs = getMessages(bk.id);
+  const pollRef = useRef<any>(null);
+  const msgs = isApiChat ? apiMessages : (bk ? getMessages(bk.id) : []);
+
+  // Load API messages
+  const loadApiMessages = useCallback(async () => {
+    if (!isApiChat) return;
+    try {
+      const chats = await fetchPatientChats(patientUsername);
+      const chat = chats.find((c) => c.doctorName === doctorName);
+      if (chat) {
+        const displayMsgs: DisplayMessage[] = chat.messages.map((m, i) => ({
+          id: `${m.timestamp}-${i}`,
+          bookingId: '',
+          text: m.text,
+          isUser: m.from === 'patient',
+          timestamp: new Date(m.timestamp),
+          time: m.time,
+          read: m.read,
+        }));
+
+        // Lokal media (audio/image) fieldlarni saqlash
+        setApiMessages((prev) => {
+          const localMedia = new Map<string, { audio?: string; audioDuration?: number; image?: string }>();
+          prev.forEach((m) => {
+            if (m.audio || m.image) {
+              localMedia.set(m.text, { audio: m.audio, audioDuration: m.audioDuration, image: m.image });
+            }
+          });
+
+          return displayMsgs.map((m) => {
+            const media = localMedia.get(m.text);
+            if (media) return { ...m, ...media };
+            return m;
+          });
+        });
+
+        // Mark doctor messages as read
+        await markMessagesRead({
+          doctorName,
+          patientUsername,
+          readerRole: 'patient',
+        }).catch(() => {});
+      }
+    } catch (e) {
+      // silently fail for polling
+    }
+  }, [isApiChat, doctorName, patientUsername]);
+
+  useEffect(() => {
+    if (isApiChat) {
+      setLoadingApi(true);
+      loadApiMessages().finally(() => setLoadingApi(false));
+
+      // Poll for new messages every 5 seconds
+      pollRef.current = setInterval(loadApiMessages, 5000);
+      return () => {
+        if (pollRef.current) clearInterval(pollRef.current);
+      };
+    }
+  }, [isApiChat, loadApiMessages]);
 
   useEffect(() => {
     return () => {
@@ -56,12 +142,46 @@ export default function DoctorChatScreen() {
   }, []);
 
   // ─── Text Send ───
-  const send = () => {
+  const send = async () => {
     if (!input.trim()) return;
-    addMessage(bk.id, input.trim(), true);
-    setInput('');
-    setTyping(true);
-    setTimeout(() => setTyping(false), 1800);
+    const text = input.trim();
+
+    if (isApiChat) {
+      setSending(true);
+      // Optimistic update
+      const optimistic: DisplayMessage = {
+        id: `${Date.now()}`,
+        bookingId: '',
+        text,
+        isUser: true,
+        timestamp: new Date(),
+        time: new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }),
+        read: false,
+      };
+      setApiMessages((prev) => [...prev, optimistic]);
+      setInput('');
+
+      try {
+        await sendChatMessage({
+          doctorName,
+          patientUsername,
+          patientName,
+          from: 'patient',
+          text,
+        });
+        // Reload to get server state
+        await loadApiMessages();
+      } catch (e) {
+        // keep optimistic message
+      } finally {
+        setSending(false);
+      }
+    } else if (bk) {
+      addMessage(bk.id, text, true);
+      setInput('');
+      setTyping(true);
+      setTimeout(() => setTyping(false), 1800);
+    }
   };
 
   // ─── Image Picker ───
@@ -79,12 +199,39 @@ export default function DoctorChatScreen() {
 
     if (!result.canceled && result.assets[0]) {
       const uri = result.assets[0].uri;
-      addMessage(bk.id, '', true, { image: uri });
-      setTyping(true);
-      setTimeout(() => {
-        addMessage(bk.id, 'Rasmni qabul qildim, rahmat. Qabulda batafsil ko\'rib chiqamiz.', false);
-        setTyping(false);
-      }, 2000);
+      if (isApiChat) {
+        const text = '📷 Rasm yuborildi';
+        setSending(true);
+        const optimistic: DisplayMessage = {
+          id: `${Date.now()}`,
+          bookingId: '',
+          text,
+          isUser: true,
+          timestamp: new Date(),
+          time: new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }),
+          read: false,
+          image: uri,
+        };
+        setApiMessages((prev) => [...prev, optimistic]);
+        try {
+          await sendChatMessage({
+            doctorName,
+            patientUsername,
+            patientName,
+            from: 'patient',
+            text,
+          });
+          await loadApiMessages();
+        } catch {}
+        setSending(false);
+      } else if (bk) {
+        addMessage(bk.id, '', true, { image: uri });
+        setTyping(true);
+        setTimeout(() => {
+          addMessage(bk.id, 'Rasmni qabul qildim, rahmat. Qabulda batafsil ko\'rib chiqamiz.', false);
+          setTyping(false);
+        }, 2000);
+      }
     }
   };
 
@@ -129,12 +276,43 @@ export default function DoctorChatScreen() {
       setRecordDuration(0);
 
       if (uri && duration >= 1) {
-        addMessage(bk.id, '', true, { audio: uri, audioDuration: duration });
-        setTyping(true);
-        setTimeout(() => {
-          addMessage(bk.id, 'Ovozli xabaringizni eshitdim. Tushunarlii, qabulda batafsil gaplashamiz.', false);
-          setTyping(false);
-        }, 2000);
+        if (isApiChat) {
+          // API chatda ovozli xabar matn sifatida yuboriladi
+          const mins = Math.floor(duration / 60);
+          const secs = duration % 60;
+          const text = `🎤 Ovozli xabar (${mins}:${secs.toString().padStart(2, '0')})`;
+          setSending(true);
+          const optimistic: DisplayMessage = {
+            id: `${Date.now()}`,
+            bookingId: '',
+            text,
+            isUser: true,
+            timestamp: new Date(),
+            time: new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }),
+            read: false,
+            audio: uri,
+            audioDuration: duration,
+          };
+          setApiMessages((prev) => [...prev, optimistic]);
+          try {
+            await sendChatMessage({
+              doctorName,
+              patientUsername,
+              patientName,
+              from: 'patient',
+              text,
+            });
+            await loadApiMessages();
+          } catch {}
+          setSending(false);
+        } else if (bk) {
+          addMessage(bk.id, '', true, { audio: uri, audioDuration: duration });
+          setTyping(true);
+          setTimeout(() => {
+            addMessage(bk.id, 'Ovozli xabaringizni eshitdim. Tushunarlii, qabulda batafsil gaplashamiz.', false);
+            setTyping(false);
+          }, 2000);
+        }
       }
     } catch (err) {
       console.error('Stop recording failed:', err);
@@ -195,32 +373,10 @@ export default function DoctorChatScreen() {
     }
   };
 
-  // ─── Call ───
+  // ─── Call (global CallContext) ───
   const startCall = (type: 'voice' | 'video') => {
-    setCallType(type);
-    setShowCall(true);
-    setCallActive(false);
-    setCallTimer(0);
-    setTimeout(() => {
-      setCallActive(true);
-      timerRef.current = setInterval(() => {
-        setCallTimer((p) => p + 1);
-      }, 1000);
-    }, 2000);
-  };
-
-  const endCall = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    const duration = callTimer;
-    setShowCall(false);
-    setCallActive(false);
-    setCallTimer(0);
-    if (duration > 0) {
-      const mins = Math.floor(duration / 60);
-      const secs = duration % 60;
-      const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
-      addMessage(bk.id, `${callType === 'video' ? 'Video' : 'Ovozli'} qo'ng'iroq · ${timeStr}`, false);
-    }
+    if (!doctorName) return;
+    globalStartCall(doctorName, type === 'voice' ? 'audio' : 'video');
   };
 
   const fmtSec = (sec: number) => {
@@ -230,7 +386,7 @@ export default function DoctorChatScreen() {
   };
 
   // ─── Render Message ───
-  const renderMsg = ({ item }: { item: DoctorMessage }) => {
+  const renderMsg = ({ item }: { item: any }) => {
     // System message (call log)
     const isCallLog = item.text.includes('qo\'ng\'iroq ·');
     if (isCallLog && !item.isUser) {
@@ -258,7 +414,7 @@ export default function DoctorChatScreen() {
             onPress={() => setPreviewImage(item.image!)}
             activeOpacity={0.9}
           >
-            {!item.isUser && <Text style={st.docLabel}>{bk.doctorName.split(' ').slice(0, 2).join(' ')}</Text>}
+            {!item.isUser && <Text style={st.docLabel}>{doctorName.split(' ').slice(0, 2).join(' ')}</Text>}
             <Image source={{ uri: item.image }} style={st.msgImage} resizeMode="cover" />
             {item.text ? <Text style={[st.bubbleText, item.isUser && st.userBubbleText, { marginTop: SP.xs }]}>{item.text}</Text> : null}
             <View style={st.bubbleFooter}>
@@ -284,7 +440,7 @@ export default function DoctorChatScreen() {
             </View>
           )}
           <View style={[st.bubble, item.isUser ? st.userBubble : st.docBubble]}>
-            {!item.isUser && <Text style={st.docLabel}>{bk.doctorName.split(' ').slice(0, 2).join(' ')}</Text>}
+            {!item.isUser && <Text style={st.docLabel}>{doctorName.split(' ').slice(0, 2).join(' ')}</Text>}
             <View style={st.audioRow}>
               <TouchableOpacity
                 style={[st.audioPlayBtn, { backgroundColor: item.isUser ? 'rgba(255,255,255,0.2)' : C.brandLight }]}
@@ -344,7 +500,7 @@ export default function DoctorChatScreen() {
           </View>
         )}
         <View style={[st.bubble, item.isUser ? st.userBubble : st.docBubble]}>
-          {!item.isUser && <Text style={st.docLabel}>{bk.doctorName.split(' ').slice(0, 2).join(' ')}</Text>}
+          {!item.isUser && <Text style={st.docLabel}>{doctorName.split(' ').slice(0, 2).join(' ')}</Text>}
           <Text style={[st.bubbleText, item.isUser && st.userBubbleText]}>{item.text}</Text>
           <View style={st.bubbleFooter}>
             <Text style={[st.bubbleTime, item.isUser && st.userBubbleTime]}>
@@ -371,9 +527,9 @@ export default function DoctorChatScreen() {
             <View style={st.onlineDot} />
           </View>
           <View>
-            <Text style={st.headerName} numberOfLines={1}>{bk.doctorName}</Text>
+            <Text style={st.headerName} numberOfLines={1}>{doctorName}</Text>
             <Text style={st.headerStatus}>
-              {bk.specialty} · Online
+              {specialty} · Online
             </Text>
           </View>
         </TouchableOpacity>
@@ -389,13 +545,15 @@ export default function DoctorChatScreen() {
       </View>
 
       {/* Booking info bar */}
-      <View style={st.infoBar}>
-        <View style={st.infoLeft}>
-          <Ionicons name="calendar-outline" size={14} color={C.brand} />
-          <Text style={st.infoText}>{bk.days.length} kunlik bron</Text>
+      {bk && (
+        <View style={st.infoBar}>
+          <View style={st.infoLeft}>
+            <Ionicons name="calendar-outline" size={14} color={C.brand} />
+            <Text style={st.infoText}>{bk.days.length} kunlik bron</Text>
+          </View>
+          <Text style={st.infoPrice}>{bk.totalPrice.toLocaleString()} so'm</Text>
         </View>
-        <Text style={st.infoPrice}>{bk.totalPrice.toLocaleString()} so'm</Text>
-      </View>
+      )}
 
       {/* Messages */}
       <FlatList
@@ -489,73 +647,6 @@ export default function DoctorChatScreen() {
         </View>
       </Modal>
 
-      {/* ─── Call Modal ─── */}
-      <Modal visible={showCall} animationType="slide" statusBarTranslucent>
-        <View style={st.callRoot}>
-          <View style={st.callBg}>
-            {callType === 'video' && callActive && (
-              <>
-                <View style={st.videoRemote}>
-                  <Ionicons name={sp.icon as any} size={60} color={sp.color} />
-                </View>
-                <View style={st.videoLocal}>
-                  <Ionicons name="person" size={20} color={C.brand} />
-                </View>
-              </>
-            )}
-          </View>
-
-          <View style={st.callOverlay}>
-            <View style={st.callTopInfo}>
-              {callType === 'video' && (
-                <View style={st.callVideoLabel}>
-                  <View style={st.callRecDot} />
-                  <Text style={st.callVideoLabelText}>Video qo'ng'iroq</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={st.callCenter}>
-              {!(callType === 'video' && callActive) && (
-                <View style={[st.callAvatar, { backgroundColor: sp.bg }]}>
-                  <Ionicons name={sp.icon as any} size={40} color={sp.color} />
-                </View>
-              )}
-              <Text style={st.callName}>{bk.doctorName}</Text>
-              <Text style={st.callSpec}>{bk.specialty}</Text>
-              <Text style={st.callStatus}>
-                {callActive ? fmtSec(callTimer) : 'Qo\'ng\'iroq qilinmoqda...'}
-              </Text>
-            </View>
-
-            <View style={st.callControls}>
-              <View style={st.callControlsRow}>
-                <TouchableOpacity style={st.callCtrlBtn}>
-                  <Ionicons name={callActive ? 'mic' : 'mic-off'} size={22} color={C.textInverse} />
-                  <Text style={st.callCtrlLabel}>Mikrofon</Text>
-                </TouchableOpacity>
-
-                {callType === 'video' && (
-                  <TouchableOpacity style={st.callCtrlBtn}>
-                    <Ionicons name="camera-reverse-outline" size={22} color={C.textInverse} />
-                    <Text style={st.callCtrlLabel}>Kamera</Text>
-                  </TouchableOpacity>
-                )}
-
-                <TouchableOpacity style={st.callCtrlBtn}>
-                  <Ionicons name={callType === 'video' ? 'videocam-off-outline' : 'volume-high-outline'} size={22} color={C.textInverse} />
-                  <Text style={st.callCtrlLabel}>{callType === 'video' ? 'Video' : 'Dinamik'}</Text>
-                </TouchableOpacity>
-              </View>
-
-              <TouchableOpacity style={st.endCallBtn} onPress={endCall} activeOpacity={0.8}>
-                <Ionicons name="call" size={24} color={C.textInverse} style={{ transform: [{ rotate: '135deg' }] }} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
       {/* ─── Info Modal ─── */}
       <Modal visible={showInfo} animationType="slide" transparent statusBarTranslucent>
         <View style={st.infoModalOverlay}>
@@ -566,8 +657,8 @@ export default function DoctorChatScreen() {
               <View style={[st.infoModalAvatar, { backgroundColor: sp.bg }]}>
                 <Ionicons name={sp.icon as any} size={28} color={sp.color} />
               </View>
-              <Text style={st.infoModalName}>{bk.doctorName}</Text>
-              <Text style={st.infoModalSpec}>{bk.specialty}</Text>
+              <Text style={st.infoModalName}>{doctorName}</Text>
+              <Text style={st.infoModalSpec}>{specialty}</Text>
             </View>
 
             <View style={st.infoActions}>
@@ -591,24 +682,26 @@ export default function DoctorChatScreen() {
               </TouchableOpacity>
             </View>
 
-            <View style={st.infoSection}>
-              <Text style={st.infoSectionTitle}>Bron tafsilotlari</Text>
-              {bk.days.map((d, i) => (
-                <View key={i} style={st.infoDetailRow}>
-                  <View style={st.infoDetailLeft}>
-                    <Ionicons name="calendar-outline" size={14} color={C.textTertiary} />
-                    <Text style={st.infoDetailText}>{d.date}</Text>
+            {bk && (
+              <View style={st.infoSection}>
+                <Text style={st.infoSectionTitle}>Bron tafsilotlari</Text>
+                {bk.days.map((d, i) => (
+                  <View key={i} style={st.infoDetailRow}>
+                    <View style={st.infoDetailLeft}>
+                      <Ionicons name="calendar-outline" size={14} color={C.textTertiary} />
+                      <Text style={st.infoDetailText}>{d.date}</Text>
+                    </View>
+                    <View style={st.infoTimeBadge}>
+                      <Text style={st.infoTimeText}>{d.time}</Text>
+                    </View>
                   </View>
-                  <View style={st.infoTimeBadge}>
-                    <Text style={st.infoTimeText}>{d.time}</Text>
-                  </View>
+                ))}
+                <View style={st.infoTotalRow}>
+                  <Text style={st.infoTotalLabel}>Jami</Text>
+                  <Text style={st.infoTotalValue}>{bk.totalPrice.toLocaleString()} so'm</Text>
                 </View>
-              ))}
-              <View style={st.infoTotalRow}>
-                <Text style={st.infoTotalLabel}>Jami</Text>
-                <Text style={st.infoTotalValue}>{bk.totalPrice.toLocaleString()} so'm</Text>
               </View>
-            </View>
+            )}
 
             <TouchableOpacity style={st.infoCloseBtn} onPress={() => setShowInfo(false)}>
               <Text style={st.infoCloseBtnText}>Yopish</Text>
@@ -781,11 +874,15 @@ const st = StyleSheet.create({
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: C.darkSecondary, justifyContent: 'center', alignItems: 'center',
   },
+  videoRemoteFull: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: C.darkSecondary,
+  },
   videoLocal: {
     position: 'absolute', top: 60, right: 20,
     width: 100, height: 140, borderRadius: RADIUS.md,
     backgroundColor: C.darkTertiary, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 2, borderColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 2, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' as const,
   },
   callOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -809,7 +906,8 @@ const st = StyleSheet.create({
   callStatus: { fontSize: 16, color: 'rgba(255,255,255,0.6)', fontWeight: '500' },
   callControls: { paddingBottom: Platform.OS === 'ios' ? 50 : 30, alignItems: 'center' },
   callControlsRow: { flexDirection: 'row', gap: SP.xxxl, marginBottom: SP.xxl },
-  callCtrlBtn: { alignItems: 'center', gap: SP.sm },
+  callCtrlBtn: { alignItems: 'center', gap: SP.sm } as any,
+  callCtrlBtnActive: { opacity: 0.5 },
   callCtrlLabel: { fontSize: 11, color: 'rgba(255,255,255,0.5)', fontWeight: '500' },
   endCallBtn: {
     width: 64, height: 64, borderRadius: 32,

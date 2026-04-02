@@ -1,57 +1,30 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Circle } from 'react-native-svg';
 import { useApp } from '../context/AppContext';
+import AppLogo from '../components/AppLogo';
 import { SPECIALTY_CONFIG } from '../data/doctors';
 import { C, RADIUS, SP } from '../theme';
 
-const SCREEN_W = Dimensions.get('window').width;
-
-function Ring({ size, pct, color, trackColor, strokeWidth = 6, children }: {
-  size: number; pct: number; color: string; trackColor: string; strokeWidth?: number; children?: React.ReactNode;
-}) {
-  const r = (size - strokeWidth) / 2;
-  const circ = 2 * Math.PI * r;
-  const dash = circ * (Math.min(pct, 100) / 100);
-  return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <Svg width={size} height={size} style={{ position: 'absolute' }}>
-        <Circle cx={size / 2} cy={size / 2} r={r} stroke={trackColor} strokeWidth={strokeWidth} fill="none" />
-        <Circle cx={size / 2} cy={size / 2} r={r} stroke={color} strokeWidth={strokeWidth} fill="none"
-          strokeLinecap="round" strokeDasharray={`${dash} ${circ - dash}`} rotation={-90} origin={`${size / 2}, ${size / 2}`} />
-      </Svg>
-      {children}
-    </View>
-  );
-}
-
 export default function HomeScreen() {
   const nav = useNavigation<any>();
-  const { bookings, reminders, health, medCard } = useApp();
+  const { bookings, reminders } = useApp();
   const active = bookings.filter((b) => b.status === 'confirmed');
   const activeReminders = reminders.filter((r) => r.enabled);
-
-  const sleepPct = Math.min(Math.round((health.sleepHours / health.sleepGoal) * 100), 100);
-  const stepsPct = Math.min(Math.round((health.steps / health.stepsGoal) * 100), 100);
-  const waterPct = Math.min(Math.round((health.waterMl / health.waterGoal) * 100), 100);
 
   return (
     <View style={s.root}>
       {/* Header */}
       <View style={s.header}>
         <View style={s.headerTop}>
-          <TouchableOpacity style={s.userRow} onPress={() => nav.navigate('Profile')} activeOpacity={0.7}>
-            <View style={s.avatar}>
-              <Ionicons name="person-circle-outline" size={28} color={C.brand} />
+          <View style={s.logoRow}>
+            <View style={s.logoWrap}>
+              <AppLogo size={32} />
             </View>
-            <View>
-              <Text style={s.hello}>{medCard.fullName || 'Assalomu alaykum'}</Text>
-              <Text style={s.sub}>{medCard.fullName ? 'Profilni ko\'rish' : 'Profil to\'ldirish uchun bosing'}</Text>
-            </View>
-          </TouchableOpacity>
+            <Text style={s.logoText}>Med Expert</Text>
+          </View>
           <TouchableOpacity style={s.iconBtn} onPress={() => nav.navigate('Reminders')}>
             <Ionicons name="notifications-outline" size={20} color={C.textTertiary} />
             {activeReminders.length > 0 && (
@@ -64,77 +37,6 @@ export default function HomeScreen() {
       </View>
 
       <ScrollView style={s.body} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-
-        {/* ── Health Charts ── */}
-        <TouchableOpacity style={s.healthCard} onPress={() => nav.navigate('Health')} activeOpacity={0.8}>
-          <View style={s.healthHeader}>
-            <View>
-              <Text style={s.healthTitle}>Kunlik salomatlik</Text>
-              <Text style={s.healthSub}>Bugungi ko'rsatkichlar</Text>
-            </View>
-            <View style={s.healthMore}>
-              <Text style={s.healthMoreText}>Batafsil</Text>
-              <Ionicons name="chevron-forward" size={14} color={C.brand} />
-            </View>
-          </View>
-
-          {/* 3 Ring Charts */}
-          <View style={s.chartsRow}>
-            {/* Sleep Ring */}
-            <View style={s.chartItem}>
-              <Ring size={80} pct={sleepPct} color="#6366F1" trackColor="#EEF2FF" strokeWidth={7}>
-                <Ionicons name="moon" size={18} color="#6366F1" />
-              </Ring>
-              <Text style={s.chartVal}>{health.sleepHours} <Text style={s.chartUnit}>soat</Text></Text>
-              <Text style={s.chartLabel}>Uyqu</Text>
-              <View style={[s.chartPctBadge, { backgroundColor: sleepPct >= 80 ? '#ECFDF5' : '#FFF7ED' }]}>
-                <Text style={[s.chartPctText, { color: sleepPct >= 80 ? '#059669' : '#D97706' }]}>{sleepPct}%</Text>
-              </View>
-            </View>
-
-            {/* Steps Ring */}
-            <View style={s.chartItem}>
-              <Ring size={80} pct={stepsPct} color="#10B981" trackColor="#ECFDF5" strokeWidth={7}>
-                <Ionicons name="footsteps" size={18} color="#10B981" />
-              </Ring>
-              <Text style={s.chartVal}>{(health.steps / 1000).toFixed(1)}<Text style={s.chartUnit}>k</Text></Text>
-              <Text style={s.chartLabel}>Qadam</Text>
-              <View style={[s.chartPctBadge, { backgroundColor: stepsPct >= 80 ? '#ECFDF5' : '#FFF7ED' }]}>
-                <Text style={[s.chartPctText, { color: stepsPct >= 80 ? '#059669' : '#D97706' }]}>{stepsPct}%</Text>
-              </View>
-            </View>
-
-            {/* Water Ring */}
-            <View style={s.chartItem}>
-              <Ring size={80} pct={waterPct} color="#0EA5E9" trackColor="#F0F9FF" strokeWidth={7}>
-                <Ionicons name="water" size={18} color="#0EA5E9" />
-              </Ring>
-              <Text style={s.chartVal}>{(health.waterMl / 1000).toFixed(1)}<Text style={s.chartUnit}>L</Text></Text>
-              <Text style={s.chartLabel}>Suv</Text>
-              <View style={[s.chartPctBadge, { backgroundColor: waterPct >= 80 ? '#ECFDF5' : '#FFF7ED' }]}>
-                <Text style={[s.chartPctText, { color: waterPct >= 80 ? '#059669' : '#D97706' }]}>{waterPct}%</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Bottom details strip */}
-          <View style={s.chartDetails}>
-            <View style={s.chartDetail}>
-              <View style={[s.chartDetailDot, { backgroundColor: '#6366F1' }]} />
-              <Text style={s.chartDetailText}>{health.sleepBedtime} — {health.sleepWakeup}</Text>
-            </View>
-            <View style={s.chartDetailDiv} />
-            <View style={s.chartDetail}>
-              <View style={[s.chartDetailDot, { backgroundColor: '#10B981' }]} />
-              <Text style={s.chartDetailText}>{(health.steps * 0.0007).toFixed(1)} km</Text>
-            </View>
-            <View style={s.chartDetailDiv} />
-            <View style={s.chartDetail}>
-              <View style={[s.chartDetailDot, { backgroundColor: '#0EA5E9' }]} />
-              <Text style={s.chartDetailText}>{health.waterGoal / 1000}L maqsad</Text>
-            </View>
-          </View>
-        </TouchableOpacity>
 
         {/* Stats */}
         <View style={s.statsRow}>
@@ -182,7 +84,7 @@ export default function HomeScreen() {
           {[
             { icon: 'pulse-outline' as const, title: 'AI Diagnostika', desc: 'Simptom tahlili', c: C.brand, bg: C.brandLight, screen: 'AIAssistant' },
             { icon: 'people-outline' as const, title: 'Shifokorlar', desc: 'Navbatga yozilish', c: C.green, bg: C.greenLight, screen: 'DoctorsTab' },
-            { icon: 'bag-handle-outline' as const, title: 'Apteka', desc: 'Dori buyurtma', c: C.red, bg: C.redLight, screen: 'PharmacyTab' },
+            { icon: 'person-outline' as const, title: 'Profil', desc: 'Shaxsiy ma\'lumotlar', c: C.red, bg: C.redLight, screen: 'ProfileTab' },
             { icon: 'chatbubbles-outline' as const, title: 'Suhbatlar', desc: 'Shifokor bilan aloqa', c: C.purple, bg: C.purpleLight, screen: 'ChatsTab' },
           ].map((sv, i) => (
             <TouchableOpacity key={i} style={s.servCard} onPress={() => nav.navigate(sv.screen)} activeOpacity={0.7}>
@@ -235,18 +137,6 @@ export default function HomeScreen() {
             <Text style={s.quickLinkTitle}>Eslatmalar</Text>
             {activeReminders.length > 0 && <View style={s.qlBadge}><Text style={s.qlBadgeText}>{activeReminders.length}</Text></View>}
           </TouchableOpacity>
-          <TouchableOpacity style={s.quickLink} onPress={() => nav.navigate('DeviceMarket')} activeOpacity={0.7}>
-            <View style={[s.quickLinkIcon, { backgroundColor: '#EFF6FF' }]}>
-              <Ionicons name="watch-outline" size={18} color="#2563EB" />
-            </View>
-            <Text style={s.quickLinkTitle}>Qurilmalar</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.quickLink} onPress={() => nav.navigate('Health')} activeOpacity={0.7}>
-            <View style={[s.quickLinkIcon, { backgroundColor: '#ECFDF5' }]}>
-              <Ionicons name="analytics-outline" size={18} color="#10B981" />
-            </View>
-            <Text style={s.quickLinkTitle}>Statistika</Text>
-          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -259,37 +149,14 @@ const s = StyleSheet.create({
   // Header
   header: { backgroundColor: C.card, paddingTop: 52, paddingBottom: SP.lg, paddingHorizontal: SP.xl, borderBottomWidth: 1, borderBottomColor: C.border },
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: SP.md },
-  avatar: { width: 40, height: 40, borderRadius: RADIUS.sm, backgroundColor: C.brandLight, justifyContent: 'center', alignItems: 'center' },
-  hello: { fontSize: 16, fontWeight: '600', color: C.text },
-  sub: { fontSize: 13, color: C.textTertiary, marginTop: 2 },
+  logoRow: { flexDirection: 'row', alignItems: 'center', gap: SP.sm },
+  logoWrap: { width: 36, height: 36, borderRadius: 10, backgroundColor: C.brand, justifyContent: 'center', alignItems: 'center' },
+  logoText: { fontSize: 18, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
   iconBtn: { width: 40, height: 40, borderRadius: RADIUS.sm, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: C.border, position: 'relative' },
   bellBadge: { position: 'absolute', top: -3, right: -3, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: C.red, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3, borderWidth: 1.5, borderColor: C.card },
   bellBadgeText: { fontSize: 9, fontWeight: '700', color: C.textInverse },
 
   body: { flex: 1, paddingHorizontal: SP.xl, paddingTop: SP.xl },
-
-  // Health charts
-  healthCard: { backgroundColor: C.card, borderRadius: RADIUS.md, padding: SP.lg, marginBottom: SP.lg, borderWidth: 1, borderColor: C.border },
-  healthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SP.lg },
-  healthTitle: { fontSize: 16, fontWeight: '700', color: C.text },
-  healthSub: { fontSize: 11, color: C.textTertiary, marginTop: 1 },
-  healthMore: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: C.brandLight, paddingHorizontal: SP.sm, paddingVertical: SP.xs, borderRadius: 6 },
-  healthMoreText: { fontSize: 11, fontWeight: '600', color: C.brand },
-
-  chartsRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: SP.lg },
-  chartItem: { alignItems: 'center', gap: SP.xs },
-  chartVal: { fontSize: 16, fontWeight: '700', color: C.text, marginTop: SP.sm },
-  chartUnit: { fontSize: 11, fontWeight: '500', color: C.textTertiary },
-  chartLabel: { fontSize: 11, color: C.textTertiary, fontWeight: '500' },
-  chartPctBadge: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, marginTop: 2 },
-  chartPctText: { fontSize: 10, fontWeight: '700' },
-
-  chartDetails: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.bg, borderRadius: RADIUS.sm, padding: SP.sm },
-  chartDetail: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
-  chartDetailDot: { width: 6, height: 6, borderRadius: 3 },
-  chartDetailText: { fontSize: 10, color: C.textTertiary, fontWeight: '500' },
-  chartDetailDiv: { width: 1, height: 14, backgroundColor: C.border },
 
   // Stats
   statsRow: { flexDirection: 'row', gap: SP.sm, marginBottom: SP.xl },

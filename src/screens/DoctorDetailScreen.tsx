@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Modal, TextInput, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Modal, TextInput, Image, ActivityIndicator } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { Doctor } from '../types';
 import { timeSlots, SPECIALTY_CONFIG } from '../data/doctors';
+import { ApiDoctor, fetchDoctorById } from '../services/doctorService';
+import { sendChatMessage } from '../services/doctorChatService';
 import { useApp, BookingDay, MedCard, MedCardFile, EMPTY_MED_CARD } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import AppModal from '../components/AppModal';
 import { C, RADIUS, SHADOW, SP } from '../theme';
 
@@ -22,9 +24,12 @@ interface DateItem {
 export default function DoctorDetailScreen() {
   const route = useRoute<any>();
   const nav = useNavigation<any>();
-  const doc: Doctor = route.params.doctor;
   const { addBooking, medCard, saveMedCard, family } = useApp();
-  const sp = SPECIALTY_CONFIG[doc.specialty] || { icon: 'medical-outline', color: C.textTertiary, bg: C.bg };
+  const { user } = useAuth();
+
+  const [doc, setDoc] = useState<ApiDoctor | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
   const [selDays, setSelDays] = useState<Record<string, string | null>>({});
   const [activeDate, setActiveDate] = useState<string | null>(null);
@@ -37,6 +42,52 @@ export default function DoctorDetailScreen() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [showError, setShowError] = useState(false);
   const [errMsg, setErrMsg] = useState('');
+
+  useEffect(() => {
+    loadDoctor();
+  }, []);
+
+  const loadDoctor = async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const data = await fetchDoctorById(route.params.doctorId);
+      setDoc(data);
+    } catch (e: any) {
+      setLoadError(e.message || 'Xatolik yuz berdi');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={[st.root, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={C.brand} />
+        <Text style={{ fontSize: 14, color: C.textTertiary, marginTop: SP.md }}>Yuklanmoqda...</Text>
+      </View>
+    );
+  }
+
+  if (loadError || !doc) {
+    return (
+      <View style={[st.root, { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40 }]}>
+        <Ionicons name="cloud-offline-outline" size={40} color={C.red} />
+        <Text style={{ fontSize: 16, fontWeight: '600', color: C.text, marginTop: SP.md }}>{loadError || 'Shifokor topilmadi'}</Text>
+        <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: SP.sm, backgroundColor: C.brandLight, paddingHorizontal: SP.xl, paddingVertical: SP.md, borderRadius: RADIUS.sm, marginTop: SP.lg }} onPress={loadDoctor}>
+          <Ionicons name="refresh" size={16} color={C.brand} />
+          <Text style={{ fontSize: 14, fontWeight: '600', color: C.brand }}>Qayta yuklash</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // API spec nomlari bilan lokal config ni moslashtirish
+  const API_SPEC_MAP: Record<string, string> = {
+    'Nevrolog': 'Nevropatolog',
+    'Otorinolaringolog': 'LOR',
+  };
+  const sp = SPECIALTY_CONFIG[doc.spec] || SPECIALTY_CONFIG[API_SPEC_MAP[doc.spec] || ''] || { icon: 'medical-outline', color: C.textTertiary, bg: C.bg };
 
   // Generate 14 days
   const dates: DateItem[] = Array.from({ length: 14 }, (_, i) => {
@@ -119,9 +170,26 @@ export default function DoctorDetailScreen() {
     setTimeout(() => setShowConfirm(true), 300);
   };
 
-  const confirmBook = () => {
+  const confirmBook = async () => {
     const days: BookingDay[] = Object.entries(selDays).map(([d, t]) => ({ date: d, time: t! }));
-    addBooking({ doctorId: doc.id, doctorName: doc.name, specialty: doc.specialty, days, price: doc.price, totalPrice: total, status: 'confirmed' });
+    addBooking({ doctorId: doc._id, doctorName: doc.name, specialty: doc.spec, days, price: doc.price, totalPrice: total, status: 'confirmed' });
+
+    // Backend ga ham xabar yuborish — chat yaratiladi
+    if (user) {
+      const daysText = days.map((d) => `${d.date}, soat ${d.time}`).join('\n');
+      try {
+        await sendChatMessage({
+          doctorName: doc.name,
+          patientUsername: user.username,
+          patientName: `${user.name} ${user.surname}`,
+          from: 'patient',
+          text: `Assalomu alaykum! Men ${card.fullName}. ${doc.spec} bo'yicha navbatga yozildim.\n\nKunlar:\n${daysText}\n\nShikoyat: ${card.complaints}`,
+        });
+      } catch {
+        // Backend xatosi bo'lsa ham lokal booking saqlangan
+      }
+    }
+
     setShowConfirm(false);
     setTimeout(() => setShowSuccess(true), 300);
   };
@@ -230,13 +298,13 @@ export default function DoctorDetailScreen() {
           <Text style={st.name}>{doc.name}</Text>
           <View style={st.spTag}>
             <Ionicons name={sp.icon as any} size={13} color="#fff" />
-            <Text style={st.spTagText}>{doc.specialty}</Text>
+            <Text style={st.spTagText}>{doc.spec}</Text>
           </View>
           <View style={st.statsRow}>
             {[
               { i: 'star' as const, v: `${doc.rating}`, l: 'Reyting', ic: '#FCD34D' },
-              { i: 'briefcase-outline' as const, v: `${doc.experience}+`, l: 'Yil', ic: '#fff' },
-              { i: 'people-outline' as const, v: `${doc.experience * 120}+`, l: 'Bemorlar', ic: '#fff' },
+              { i: 'briefcase-outline' as const, v: `${doc.exp}+`, l: 'Yil', ic: '#fff' },
+              { i: 'people-outline' as const, v: `${doc.exp * 120}+`, l: 'Bemorlar', ic: '#fff' },
             ].map((x, i) => (
               <React.Fragment key={i}>
                 {i > 0 && <View style={st.stDiv} />}
@@ -255,8 +323,8 @@ export default function DoctorDetailScreen() {
         {/* Info cards */}
         <View style={st.infoCards}>
           {[
-            { i: 'location' as const, t: doc.location },
             { i: 'cash-outline' as const, t: `${doc.price.toLocaleString()} so'm / seans` },
+            { i: 'chatbubble-outline' as const, t: `${doc.reviews} ta sharh` },
           ].map((x, i) => (
             <View key={i} style={st.infoCard}>
               <Ionicons name={x.i} size={15} color={C.green} />
@@ -264,6 +332,35 @@ export default function DoctorDetailScreen() {
             </View>
           ))}
         </View>
+
+        {/* Tags */}
+        {doc.tags.length > 0 && (
+          <View style={[st.infoCards, { flexDirection: 'row', flexWrap: 'wrap', gap: SP.sm }]}>
+            {doc.tags.map((tag, i) => (
+              <View key={i} style={{ backgroundColor: sp.bg, paddingHorizontal: SP.md, paddingVertical: SP.xs, borderRadius: RADIUS.xs }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: sp.color }}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Medicines */}
+        {doc.medicines && doc.medicines.length > 0 && (
+          <View style={st.sec}>
+            <Text style={st.secT}>Tavsiya etiladigan dorilar</Text>
+            <View style={{ marginTop: SP.md, gap: SP.sm }}>
+              {doc.medicines.map((med, i) => (
+                <View key={i} style={st.infoCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>{med.name}</Text>
+                    <Text style={{ fontSize: 12, color: C.textTertiary, marginTop: 2 }}>{med.desc} · {med.dose}</Text>
+                  </View>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: C.brand }}>{(med.price / 1000).toFixed(0)}k</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Calendar */}
         <View style={st.sec}>
@@ -681,7 +778,7 @@ export default function DoctorDetailScreen() {
         details={[
           { label: 'Bemor', value: card.fullName },
           { label: 'Shifokor', value: doc.name },
-          { label: 'Mutaxassislik', value: doc.specialty },
+          { label: 'Mutaxassislik', value: doc.spec },
           { label: 'Kunlar', value: `${cnt}` },
           ...Object.entries(selDays).map(([d, t]) => ({ label: d, value: t || '' })),
           { label: 'Shikoyat', value: card.complaints.slice(0, 50) + (card.complaints.length > 50 ? '...' : '') },

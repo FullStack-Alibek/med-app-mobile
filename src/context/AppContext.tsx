@@ -1,4 +1,13 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { useAuth } from './AuthContext';
+import {
+  fetchMedCard,
+  saveMedCardApi,
+  fetchFamily,
+  addFamilyMemberApi,
+  removeFamilyMemberApi,
+  ApiFamilyMember,
+} from '../services/medCardService';
 
 export interface BookingDay {
   date: string;
@@ -94,6 +103,8 @@ interface AppState {
   health: HealthData;
   medCard: MedCard;
   family: FamilyMember[];
+  medCardLoading: boolean;
+  familyLoading: boolean;
   saveMedCard: (card: MedCard) => void;
   addFamilyMember: (m: Omit<FamilyMember, 'id'>) => void;
   removeFamilyMember: (id: string) => void;
@@ -112,125 +123,125 @@ interface AppState {
 
 const AppContext = createContext<AppState | null>(null);
 
+// API dan kelgan family member ni lokal formatga o'girish
+function apiToLocalFamily(m: ApiFamilyMember): FamilyMember {
+  return {
+    id: m._id,
+    name: m.name,
+    relation: m.relation,
+    birthYear: m.birthYear || '',
+    gender: m.gender,
+    medCard: m.medCard ? { ...m.medCard, gender: m.medCard.gender as MedCard['gender'], files: [] } : undefined,
+  };
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [messages, setMessages] = useState<Record<string, DoctorMessage[]>>({});
   const [reminders, setReminders] = useState<Reminder[]>([]);
-  const [medCard, setMedCard] = useState<MedCard>({
-    fullName: 'Karimov Jasur Bahodirovich',
-    birthYear: '1995',
-    gender: 'erkak',
-    bloodType: 'II (A)',
-    allergies: 'Penisilin, changga allergiya',
-    chronicDiseases: 'Gipertoniya (2-daraja)',
-    currentMeds: 'Amlodipin 5mg (kuniga 1 marta)',
-    complaints: 'Bosh og\'rig\'i va bosh aylanishi 2 haftadan beri bezovta qilmoqda. Qon bosimi ba\'zan 150/95 gacha ko\'tariladi.',
-    files: [],
+  const [medCard, setMedCard] = useState<MedCard>(EMPTY_MED_CARD);
+  const [family, setFamily] = useState<FamilyMember[]>([]);
+  const [medCardLoading, setMedCardLoading] = useState(false);
+  const [familyLoading, setFamilyLoading] = useState(false);
+  const [health, setHealth] = useState<HealthData>({
+    sleepHours: 0, sleepGoal: 8, sleepBedtime: '23:00', sleepWakeup: '07:00',
+    steps: 0, stepsGoal: 10000,
+    waterMl: 0, waterGoal: 2500,
   });
-  const [family, setFamily] = useState<FamilyMember[]>([
-    {
-      id: '1',
-      name: 'Karimova Mohira Xasanovna',
-      relation: 'Ayolim',
-      birthYear: '1997',
-      gender: 'ayol',
-      medCard: {
-        fullName: 'Karimova Mohira Xasanovna',
-        birthYear: '1997',
-        gender: 'ayol',
-        bloodType: 'III (B)',
-        allergies: '',
-        chronicDiseases: '',
-        currentMeds: '',
-        complaints: 'Oshqozon og\'rig\'i va ko\'ngil aynishi 1 haftadan beri davom etmoqda.',
-        files: [],
-      },
-    },
-    {
-      id: '2',
-      name: 'Karimov Bahodir Rahimovich',
-      relation: 'Otam',
-      birthYear: '1965',
-      gender: 'erkak',
-      medCard: {
-        fullName: 'Karimov Bahodir Rahimovich',
-        birthYear: '1965',
-        gender: 'erkak',
-        bloodType: 'II (A)',
-        allergies: '',
-        chronicDiseases: 'Qandli diabet (2-tur), gipertoniya',
-        currentMeds: 'Metformin 500mg, Enalapril 10mg',
-        complaints: 'Oyoqlarda shishish va charchash kuzatilmoqda.',
-        files: [],
-      },
-    },
-    {
-      id: '3',
-      name: 'Karimova Zulfiya Toshpulatovna',
-      relation: 'Onam',
-      birthYear: '1968',
-      gender: 'ayol',
-      medCard: {
-        fullName: 'Karimova Zulfiya Toshpulatovna',
-        birthYear: '1968',
-        gender: 'ayol',
-        bloodType: 'I (O)',
-        allergies: 'Penisilin',
-        chronicDiseases: 'Bo\'g\'im og\'rig\'i (artrit)',
-        currentMeds: 'Diklofenak 50mg',
-        complaints: 'Tizza bo\'g\'imlarida og\'riq va shishish kuchaygan.',
-        files: [],
-      },
-    },
-    {
-      id: '4',
-      name: 'Karimov Amir Jasurovich',
-      relation: 'O\'g\'lim',
-      birthYear: '2018',
-      gender: 'erkak',
-      medCard: {
-        fullName: 'Karimov Amir Jasurovich',
-        birthYear: '2018',
-        gender: 'erkak',
-        bloodType: 'II (A)',
-        allergies: 'Tuxumga allergiya',
-        chronicDiseases: '',
-        currentMeds: '',
-        complaints: 'Yo\'tal va burun bitishi 3 kundan beri.',
-        files: [],
-      },
-    },
-    {
-      id: '5',
-      name: 'Karimova Madina Jasurovna',
-      relation: 'Qizim',
-      birthYear: '2020',
-      gender: 'ayol',
-      medCard: {
-        fullName: 'Karimova Madina Jasurovna',
-        birthYear: '2020',
-        gender: 'ayol',
-        bloodType: 'III (B)',
-        allergies: '',
-        chronicDiseases: '',
-        currentMeds: '',
-        complaints: 'Tana harorati 38.2, ishtaha yo\'qligi.',
-        files: [],
-      },
-    },
-  ]);
-  const saveMedCard = useCallback((card: MedCard) => setMedCard(card), []);
+
+  // ── User login bo'lganda backenddan medcard va family yuklash ──
+  useEffect(() => {
+    if (!user) {
+      setMedCard(EMPTY_MED_CARD);
+      setFamily([]);
+      return;
+    }
+
+    // MedCard yuklash
+    setMedCardLoading(true);
+    fetchMedCard(user.username)
+      .then((data) => {
+        if (data) {
+          setMedCard({
+            fullName: data.fullName || '',
+            birthYear: data.birthYear || '',
+            gender: (data.gender as MedCard['gender']) || '',
+            bloodType: data.bloodType || '',
+            allergies: data.allergies || '',
+            chronicDiseases: data.chronicDiseases || '',
+            currentMeds: data.currentMeds || '',
+            complaints: data.complaints || '',
+            files: [],
+          });
+        } else {
+          setMedCard(EMPTY_MED_CARD);
+        }
+      })
+      .catch(() => setMedCard(EMPTY_MED_CARD))
+      .finally(() => setMedCardLoading(false));
+
+    // Family yuklash
+    setFamilyLoading(true);
+    fetchFamily(user.username)
+      .then((data) => setFamily(data.map(apiToLocalFamily)))
+      .catch(() => setFamily([]))
+      .finally(() => setFamilyLoading(false));
+  }, [user]);
+
+  // ── MedCard saqlash — lokal + backend ──
+  const saveMedCard = useCallback((card: MedCard) => {
+    setMedCard(card);
+    if (user) {
+      saveMedCardApi(user.username, {
+        fullName: card.fullName,
+        birthYear: card.birthYear,
+        gender: card.gender,
+        bloodType: card.bloodType,
+        allergies: card.allergies,
+        chronicDiseases: card.chronicDiseases,
+        currentMeds: card.currentMeds,
+        complaints: card.complaints,
+      }).catch(() => {});
+    }
+  }, [user]);
+
+  // ── Oila a'zosi qo'shish — lokal + backend ──
   const addFamilyMember = useCallback((m: Omit<FamilyMember, 'id'>) => {
-    setFamily((p) => [...p, { ...m, id: Date.now().toString() }]);
-  }, []);
+    // Darhol lokal qo'shish (vaqtinchalik id bilan)
+    const tempId = Date.now().toString();
+    setFamily((p) => [...p, { ...m, id: tempId }]);
+
+    if (user) {
+      addFamilyMemberApi(user.username, {
+        name: m.name,
+        relation: m.relation,
+        birthYear: m.birthYear,
+        gender: m.gender,
+        medCard: m.medCard ? {
+          fullName: m.medCard.fullName,
+          birthYear: m.medCard.birthYear,
+          gender: m.medCard.gender,
+          bloodType: m.medCard.bloodType,
+          allergies: m.medCard.allergies,
+          chronicDiseases: m.medCard.chronicDiseases,
+          currentMeds: m.medCard.currentMeds,
+          complaints: m.medCard.complaints,
+        } : undefined,
+      }).then((created) => {
+        // Backend dan kelgan _id bilan yangilash
+        setFamily((p) => p.map((f) => f.id === tempId ? apiToLocalFamily(created) : f));
+      }).catch(() => {});
+    }
+  }, [user]);
+
+  // ── Oila a'zosini o'chirish — lokal + backend ──
   const removeFamilyMember = useCallback((id: string) => {
     setFamily((p) => p.filter((m) => m.id !== id));
-  }, []);
-  const [health, setHealth] = useState<HealthData>({
-    sleepHours: 6.5, sleepGoal: 8, sleepBedtime: '23:30', sleepWakeup: '06:00',
-    steps: 4280, stepsGoal: 10000,
-    waterMl: 800, waterGoal: 2500,
-  });
+    if (user) {
+      removeFamilyMemberApi(user.username, id).catch(() => {});
+    }
+  }, [user]);
 
   const addBooking = useCallback((data: Omit<Booking, 'id' | 'createdAt'>): Booking => {
     const booking: Booking = { ...data, id: Date.now().toString(), createdAt: new Date() };
@@ -317,6 +328,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   return (
     <AppContext.Provider value={{
       bookings, messages, reminders, health, medCard, family,
+      medCardLoading, familyLoading,
       saveMedCard, addFamilyMember, removeFamilyMember,
       addBooking, cancelBooking, addMessage, getMessages,
       addReminder, updateReminder, deleteReminder, toggleReminder,

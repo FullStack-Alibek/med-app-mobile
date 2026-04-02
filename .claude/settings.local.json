@@ -21,7 +21,14 @@
       "Bash(find:*)",
       "Bash(kill %1)",
       "Bash(wait)",
-      "Bash(grep -rn \"#[A-Fa-f0-9]\\\\{3,8\\\\}\\\\|rgba\\\\|StatusBar.*barStyle\" /c/Users/admin/Desktop/medAppMobile/src/screens/*.tsx)"
+      "Bash(grep -rn \"#[A-Fa-f0-9]\\\\{3,8\\\\}\\\\|rgba\\\\|StatusBar.*barStyle\" /c/Users/admin/Desktop/medAppMobile/src/screens/*.tsx)",
+      "Bash(curl -s \"http://localhost:8083/index.bundle?platform=android&dev=true&minify=false\")",
+      "Bash(curl -s https://med-expert.donoxonsi.uz/api/doctors)",
+      "Bash(curl:*)",
+      "Bash(grep:*)",
+      "Read(//c/Users/admin/AppData/Local/Temp/claude/C--Users-admin-Desktop-medAppMobile/649be7d4-20b8-46f8-88ee-34a411dee2fc/tasks/**)",
+      "Bash(dir \"C:\\\\Android\\\\platforms\")",
+      "Bash(dir \"C:\\\\Android\\\\build-tools\")"
     ]
   }
 }

@@ -1,18 +1,22 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Modal, TextInput, Platform, Alert,
+  Modal, TextInput, Platform, Alert, ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useNavigationState } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp, FamilyMember, EMPTY_MED_CARD } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import { C, RADIUS, SP, SHADOW } from '../theme';
 
 const RELATIONS = ['Turmush o\'rtog\'im', 'Farzandim', 'Otam', 'Onam', 'Akam', 'Opam', 'Boshqa'];
 
 export default function ProfileScreen() {
   const nav = useNavigation();
-  const { medCard, saveMedCard, family, addFamilyMember, removeFamilyMember, health, bookings } = useApp();
+  const canGoBack = useNavigationState((state) => state.routes.length > 1);
+  const { medCard, saveMedCard, family, addFamilyMember, removeFamilyMember, health, bookings, medCardLoading, familyLoading } = useApp();
+  const { user, logout } = useAuth();
 
   const [showAddFamily, setShowAddFamily] = useState(false);
   const [fName, setFName] = useState('');
@@ -24,12 +28,13 @@ export default function ProfileScreen() {
   const [editFullName, setEditFullName] = useState(medCard.fullName);
   const [editYear, setEditYear] = useState(medCard.birthYear);
   const [editGender, setEditGender] = useState(medCard.gender);
+  const [editBlood, setEditBlood] = useState(medCard.bloodType);
 
   const hasMedCard = !!medCard.fullName;
   const activeBookings = bookings.filter((b) => b.status === 'confirmed').length;
 
   const saveProfile = () => {
-    saveMedCard({ ...medCard, fullName: editFullName.trim(), birthYear: editYear.trim(), gender: editGender });
+    saveMedCard({ ...medCard, fullName: editFullName.trim(), birthYear: editYear.trim(), gender: editGender, bloodType: editBlood });
     setShowEditCard(false);
   };
 
@@ -51,9 +56,13 @@ export default function ProfileScreen() {
     <View style={s.root}>
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => nav.goBack()}>
-          <Ionicons name="arrow-back" size={20} color={C.text} />
-        </TouchableOpacity>
+        {canGoBack ? (
+          <TouchableOpacity style={s.backBtn} onPress={() => nav.goBack()}>
+            <Ionicons name="arrow-back" size={20} color={C.text} />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 40 }} />
+        )}
         <Text style={s.headerTitle}>Profil</Text>
         <View style={{ width: 40 }} />
       </View>
@@ -64,7 +73,9 @@ export default function ProfileScreen() {
           <View style={s.avatarLarge}>
             <Ionicons name="person" size={32} color={C.brand} />
           </View>
-          {hasMedCard ? (
+          {medCardLoading ? (
+            <ActivityIndicator size="small" color={C.brand} style={{ marginVertical: 12 }} />
+          ) : hasMedCard ? (
             <>
               <Text style={s.profileName}>{medCard.fullName}</Text>
               <View style={s.profileMeta}>
@@ -77,7 +88,7 @@ export default function ProfileScreen() {
                 ) : null}
                 {medCard.bloodType ? <Text style={s.profileMetaText}>Qon: {medCard.bloodType}</Text> : null}
               </View>
-              <TouchableOpacity style={s.editProfileBtn} onPress={() => { setEditFullName(medCard.fullName); setEditYear(medCard.birthYear); setEditGender(medCard.gender); setShowEditCard(true); }}>
+              <TouchableOpacity style={s.editProfileBtn} onPress={() => { setEditFullName(medCard.fullName); setEditYear(medCard.birthYear); setEditGender(medCard.gender); setEditBlood(medCard.bloodType); setShowEditCard(true); }}>
                 <Ionicons name="create-outline" size={14} color={C.brand} />
                 <Text style={s.editProfileText}>Tahrirlash</Text>
               </TouchableOpacity>
@@ -146,7 +157,11 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </View>
 
-        {family.length === 0 ? (
+        {familyLoading ? (
+          <View style={s.emptyFamily}>
+            <ActivityIndicator size="small" color={C.brand} />
+          </View>
+        ) : family.length === 0 ? (
           <View style={s.emptyFamily}>
             <View style={s.emptyFamilyIcon}>
               <Ionicons name="people-outline" size={24} color={C.textTertiary} />
@@ -174,6 +189,22 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
           ))
+        )}
+
+        {/* Logout */}
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.redLight, paddingVertical: 14, borderRadius: RADIUS.md, marginTop: SP.xl, marginHorizontal: SP.xl }}
+          onPress={() => Alert.alert("Chiqish", "Hisobdan chiqmoqchimisiz?", [{ text: "Yo'q" }, { text: "Ha", style: 'destructive', onPress: logout }])}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="log-out-outline" size={18} color={C.red} />
+          <Text style={{ fontSize: 15, fontWeight: '600', color: C.red }}>Chiqish</Text>
+        </TouchableOpacity>
+
+        {user && (
+          <Text style={{ textAlign: 'center', fontSize: 11, color: C.textTertiary, marginTop: SP.md }}>
+            @{user.username} · {user.phone}
+          </Text>
         )}
 
         <View style={{ height: 40 }} />
@@ -210,6 +241,15 @@ export default function ProfileScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
+            </View>
+
+            <Text style={s.mLabel}>Qon guruhi</Text>
+            <View style={s.mBloodRow}>
+              {['I (O)', 'II (A)', 'III (B)', 'IV (AB)'].map((bt) => (
+                <TouchableOpacity key={bt} style={[s.mBloodBtn, editBlood === bt && s.mBloodBtnOn]} onPress={() => setEditBlood(editBlood === bt ? '' : bt)} activeOpacity={0.7}>
+                  <Text style={[s.mBloodText, editBlood === bt && s.mBloodTextOn]}>{bt}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
 
             <TouchableOpacity style={[s.mSaveBtn, !editFullName.trim() && { backgroundColor: C.border }]} onPress={saveProfile} disabled={!editFullName.trim()} activeOpacity={0.8}>
@@ -341,7 +381,12 @@ const s = StyleSheet.create({
   mInputText: { fontSize: 14, color: C.text, paddingVertical: SP.md },
   mRow: { flexDirection: 'row', gap: SP.md },
   mGenderRow: { flexDirection: 'row', gap: SP.sm },
-  mGenderBtn: { flex: 1, alignItems: 'center', paddingVertical: SP.md, borderRadius: RADIUS.sm, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.bg },
+  mGenderBtn: { flex: 1, alignItems: 'center', paddingVertical: SP.md, borderRadius: RADIUS.sm, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.bg } as any,
+  mBloodRow: { flexDirection: 'row', gap: SP.sm } as any,
+  mBloodBtn: { flex: 1, alignItems: 'center', paddingVertical: SP.md, borderRadius: RADIUS.sm, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.bg } as any,
+  mBloodBtnOn: { backgroundColor: '#DC2626', borderColor: '#DC2626' },
+  mBloodText: { fontSize: 12, fontWeight: '600', color: C.text },
+  mBloodTextOn: { color: C.textInverse },
   mGenderText: { fontSize: 13, fontWeight: '600', color: C.text },
   mSaveBtn: { backgroundColor: C.brand, paddingVertical: SP.lg, borderRadius: RADIUS.md, alignItems: 'center', marginTop: SP.xl },
   mSaveText: { fontSize: 16, fontWeight: '600', color: C.textInverse },
