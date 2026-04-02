@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/admin/Desktop/**)",
+      "Bash(npx create-expo-app@latest medAppMobile --template blank-typescript)",
+      "Bash(npx create-expo-app@latest medAppMobile --template blank-typescript --yes)",
+      "Bash(cd:*)",
+      "Bash(npx expo:*)",
+      "Bash(npx tsc:*)",
+      "Bash(grep -E \"\\\\.\\(json|js\\)$\")",
+      "Bash(npx eas:*)",
+      "Bash(npm ls:*)",
+      "Bash(./gradlew assembleRelease)",
+      "Bash(./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon)",
+      "Bash(./gradlew --stop)",
+      "Bash(./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --max-workers=2)",
+      "Bash(./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --max-workers=2 --stacktrace)",
+      "Bash(taskkill //F //IM java.exe)",
+      "Bash(taskkill //F //IM gradle.exe)",
+      "Bash(tasklist)",
+      "Bash(find:*)",
+      "Bash(kill %1)",
+      "Bash(wait)",
+      "Bash(grep -rn \"#[A-Fa-f0-9]\\\\{3,8\\\\}\\\\|rgba\\\\|StatusBar.*barStyle\" /c/Users/admin/Desktop/medAppMobile/src/screens/*.tsx)"
+    ]
+  }
+}
